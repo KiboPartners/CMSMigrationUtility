@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "paths": {
+      "@kibo-cms-clone-tool/shared": [
+        "../../shared/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*",
+    "index.ts"
+  ],
+  "ts-node": {
+    "transpileOnly": true,
+    "files": true,
+    "require": [
+      "tsconfig-paths/register"
+    ]
+  }
+}

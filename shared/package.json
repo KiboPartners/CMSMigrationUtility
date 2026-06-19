@@ -1,0 +1,19 @@
+{
+  "name": "@kibo-cms-clone-tool/shared",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "cli-progress": "^3.12.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/cli-progress": "^3.11.5",
+    "typescript": "^5.4.5",
+    "@types/node": "^20.12.7"
+  }
+}

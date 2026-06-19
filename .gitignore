@@ -1,0 +1,36 @@
+node_modules/
+dist/
+.env
+.env.local
+packages/**/export/
+cms-schema.json
+*.schema.json
+cloning-errors-*.json
+page-cloning-errors-*.json
+asset-cloning-errors-*.json
+redirects-errors-*.json
+purge-errors-*.json
+page-purge-errors-*.json
+file-purge-errors-*.json
+redirect-purge-errors-*.json
+s3-copy-manifest.txt
+catalog*.json
+target-catalog.json
+.runs/
+.commitmsg.tmp
+*.log
+rerun-failed.sh
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+graphify-out/
+.graphifyignore
+.playwright-mcp/
+.claude
+# Local export staging output (exported content — never commit)
+export/
+.catalog-tmp/
+# Transient migrate/catalog scratch dirs
+.migrate-tmp/
+.catalog-tmp/
