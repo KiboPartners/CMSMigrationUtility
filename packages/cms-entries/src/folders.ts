@@ -10,7 +10,7 @@
  * Manage entry, but create/list the folders themselves on the Admin endpoint.
  */
 
-import { GraphQLClient, FolderAdapter, FolderNode } from "@kibo-cms-clone-tool/shared";
+import { GraphQLClient, FolderAdapter, FolderNode, resolveAcoFolderInputType } from "@kibo-cms-clone-tool/shared";
 
 /** Kibo CMS's literal "no folder" sentinel — treat as root, never a real folder id. */
 export const ROOT_FOLDER_ID = "root";
@@ -38,8 +38,8 @@ const LIST_FOLDERS_QUERY = /* GraphQL */ `
   }
 `;
 
-const CREATE_FOLDER_MUTATION = /* GraphQL */ `
-  mutation CreateEntryFolder($data: AcoFolderCreateInput!) {
+const createFolderMutation = (inputType: string) => /* GraphQL */ `
+  mutation CreateEntryFolder($data: ${inputType}!) {
     aco {
       createFolder(data: $data) {
         data { id title slug parentId }
@@ -110,7 +110,8 @@ export function entryFolderAdapter(adminClient: GraphQLClient, modelId: string):
   return {
     listTargetFolders: () => fetchEntryFolders(adminClient, modelId).catch(() => []),
     createFolder: async ({ name, slug, parentId }) => {
-      const resp = await adminClient.request<CreateFolderResponse>(CREATE_FOLDER_MUTATION, {
+      const inputType = await resolveAcoFolderInputType(adminClient);
+      const resp = await adminClient.request<CreateFolderResponse>(createFolderMutation(inputType), {
         data: { title: name, slug, type: acoType(modelId), parentId: parentId ?? null },
       });
       const result = resp.aco.createFolder;

@@ -20,6 +20,7 @@ import {
   formatFolderValidation,
   FolderAdapter,
   FolderNode,
+  resolveAcoFolderInputType,
 } from "@kibo-cms-clone-tool/shared";
 import { ExportFile, RedirectRecord } from "./export";
 import { ImportConfig } from "./config";
@@ -271,8 +272,9 @@ const LIST_TARGET_FOLDERS_QUERY = /* GraphQL */ `
   }
 `;
 
-const CREATE_FOLDER_ACO_MUTATION = /* GraphQL */ `
-  mutation CreateRedirectFolder($data: AcoFolderCreateInput!) {
+// aco createFolder input type varies by version — resolved at runtime (shared).
+const createFolderAcoMutation = (inputType: string) => /* GraphQL */ `
+  mutation CreateRedirectFolder($data: ${inputType}!) {
     aco {
       createFolder(data: $data) {
         data {
@@ -309,6 +311,7 @@ interface CreateFolderResponse {
 }
 
 const REDIRECT_FOLDER_TYPE_CANDIDATES = [
+  "wb:redirect", // namespaced ACO type used on current Kibo CMS installs
   "WbRedirect",
   "WebsiteBuilderRedirect",
   "Redirect",
@@ -360,7 +363,8 @@ function redirectFolderAdapter(client: GraphQLClient): FolderAdapter {
       return [];
     },
     createFolder: async ({ name, slug, parentId }) => {
-      const resp = await client.request<CreateFolderResponse>(CREATE_FOLDER_ACO_MUTATION, {
+      const inputType = await resolveAcoFolderInputType(client);
+      const resp = await client.request<CreateFolderResponse>(createFolderAcoMutation(inputType), {
         data: { title: name, slug, type: activeType, parentId: parentId ?? null },
       });
       const result = resp.aco.createFolder;

@@ -19,6 +19,30 @@
  * engine itself is API-agnostic.
  */
 
+import type { GraphQLClient } from "./graphql";
+
+/**
+ * The ACO `createFolder` input type name varies by Kibo CMS version
+ * (`FolderCreateInput` vs `AcoFolderCreateInput`). Resolve it at runtime against
+ * the live schema — never hardcode. Memoized per process. Used by every aco
+ * folder adapter (cms-entries / page-builder / redirects).
+ */
+const ACO_FOLDER_INPUT_CANDIDATES = ["FolderCreateInput", "AcoFolderCreateInput"];
+let resolvedAcoFolderInputType: string | null = null;
+
+export async function resolveAcoFolderInputType(client: GraphQLClient): Promise<string> {
+  if (resolvedAcoFolderInputType) return resolvedAcoFolderInputType;
+  for (const name of ACO_FOLDER_INPUT_CANDIDATES) {
+    try {
+      const r = await client.request<{ __type: { name: string } | null }>(
+        `{ __type(name: "${name}") { name } }`, undefined, { maxAttempts: 1 }
+      );
+      if (r.__type?.name) { resolvedAcoFolderInputType = name; return name; }
+    } catch { /* try next */ }
+  }
+  return ACO_FOLDER_INPUT_CANDIDATES[0];
+}
+
 /** A folder node, normalized across artifacts. */
 export interface FolderNode {
   id: string;

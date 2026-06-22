@@ -135,6 +135,7 @@ interface ListFoldersAcoResponse {
 
 // Candidate ACO type strings for redirect folders — tried in order
 const REDIRECT_FOLDER_TYPE_CANDIDATES = [
+  "wb:redirect", // namespaced ACO type used on current Kibo CMS installs
   "WbRedirect",
   "WebsiteBuilderRedirect",
   "Redirect",

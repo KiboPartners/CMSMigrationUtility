@@ -10,9 +10,10 @@
  * candidates and records the one that actually has folders; import reuses it.
  */
 
-import { GraphQLClient, FolderAdapter, FolderNode } from "@kibo-cms-clone-tool/shared";
+import { GraphQLClient, FolderAdapter, FolderNode, resolveAcoFolderInputType } from "@kibo-cms-clone-tool/shared";
 
 export const PAGE_FOLDER_TYPE_CANDIDATES = [
+  "wb:page", // namespaced ACO type used on current Kibo CMS installs
   "WbPage",
   "PbPage",
   "Page",
@@ -40,8 +41,9 @@ const LIST_FOLDERS_QUERY = /* GraphQL */ `
   }
 `;
 
-const CREATE_FOLDER_MUTATION = /* GraphQL */ `
-  mutation CreatePageFolder($data: AcoFolderCreateInput!) {
+// aco createFolder input type varies by version — resolved at runtime (shared).
+const createFolderMutation = (inputType: string) => /* GraphQL */ `
+  mutation CreatePageFolder($data: ${inputType}!) {
     aco {
       createFolder(data: $data) {
         data { id title slug parentId }
@@ -118,7 +120,8 @@ export function pageFolderAdapter(client: GraphQLClient, folderType: string): Fo
   return {
     listTargetFolders: () => fetchFoldersOfType(client, folderType).catch(() => []),
     createFolder: async ({ name, slug, parentId }) => {
-      const resp = await client.request<CreateFolderResponse>(CREATE_FOLDER_MUTATION, {
+      const inputType = await resolveAcoFolderInputType(client);
+      const resp = await client.request<CreateFolderResponse>(createFolderMutation(inputType), {
         data: { title: name, slug, type: folderType, parentId: parentId ?? null },
       });
       const result = resp.aco.createFolder;
