@@ -69,8 +69,16 @@ interface CreateFolderResponse {
 }
 
 /**
- * Export-side: fetch the ACO folder tree for one model (type = modelId) from the
- * Admin endpoint. Returns [] if the endpoint has no folders for it.
+ * ACO `type` discriminator for a content model's entry folders. Kibo CMS keys
+ * these under `cms:<modelId>` (NOT the bare modelId — that returns no folders).
+ */
+function acoType(modelId: string): string {
+  return modelId.startsWith("cms:") ? modelId : `cms:${modelId}`;
+}
+
+/**
+ * Export-side: fetch the ACO folder tree for one model (type = `cms:<modelId>`)
+ * from the Admin endpoint. Returns [] if the endpoint has no folders for it.
  */
 export async function fetchEntryFolders(
   adminClient: GraphQLClient,
@@ -83,7 +91,7 @@ export async function fetchEntryFolders(
   while (hasMore) {
     const resp: ListFoldersResponse = await adminClient.request<ListFoldersResponse>(
       LIST_FOLDERS_QUERY,
-      { where: { type: modelId }, after: cursor, limit: 100 }
+      { where: { type: acoType(modelId) }, after: cursor, limit: 100 }
     );
     const result = resp.aco.listFolders;
     if (result.error) throw new Error(result.error.message);
@@ -103,7 +111,7 @@ export function entryFolderAdapter(adminClient: GraphQLClient, modelId: string):
     listTargetFolders: () => fetchEntryFolders(adminClient, modelId).catch(() => []),
     createFolder: async ({ name, slug, parentId }) => {
       const resp = await adminClient.request<CreateFolderResponse>(CREATE_FOLDER_MUTATION, {
-        data: { title: name, slug, type: modelId, parentId: parentId ?? null },
+        data: { title: name, slug, type: acoType(modelId), parentId: parentId ?? null },
       });
       const result = resp.aco.createFolder;
       if (result.error || !result.data) {
