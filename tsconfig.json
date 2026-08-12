@@ -1,10 +1,16 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist"
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@kibo-cms-clone-tool/shared": ["src/shared/index.ts"]
+    }
   },
-  "include": ["index.ts"],
+  "include": ["index.ts", "server.ts", "src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "src/shared/dist", "tests"],
   "ts-node": {
-    "transpileOnly": true
+    "transpileOnly": true,
+    "require": ["./register-shared.js"]
   }
 }

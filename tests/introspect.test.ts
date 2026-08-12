@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { parseSkippableField, buildSelectionSet, buildListQuery } from "../packages/cms-entries/src/introspect";
+import { GraphQLError } from "@kibo-cms-clone-tool/shared";
+import {
+  parseSkippableField,
+  buildSelectionSet,
+  buildListQuery,
+  seedMultiValueFileSkips,
+  isMultiValueFileSerializeError,
+} from "../src/artifacts/cms-entries/introspect";
 
 const MODEL = {
   modelId: "promoBanner",
@@ -35,6 +42,53 @@ describe("parseSkippableField", () => {
 
   it("returns null for unrelated errors", () => {
     expect(parseSkippableField(new Error("Network error: ECONNRESET"))).toBeNull();
+  });
+
+  it("extracts fieldId from GraphQLError.path (String cannot represent value)", () => {
+    const err = new GraphQLError(
+      'String cannot represent value: ["https://cdn.example/a.png"]',
+      [{
+        message: 'String cannot represent value: ["https://cdn.example/a.png"]',
+        path: ["listLogoGrids", "data", 0, "values", "src"],
+      }]
+    );
+    expect(parseSkippableField(err)).toBe("src");
+  });
+
+  it("uses the first error path when several serialization errors are joined", () => {
+    const err = new GraphQLError("a; b", [
+      { message: "a", path: ["listLogoGrids", "data", 0, "values", "logo1"] },
+      { message: "b", path: ["listLogoGrids", "data", 0, "values", "logo2"] },
+    ]);
+    expect(parseSkippableField(err)).toBe("logo1");
+  });
+
+  it("returns null for serialization errors without a path", () => {
+    expect(parseSkippableField(new Error(
+      'String cannot represent value: ["https://cdn.example/a.png"]'
+    ))).toBeNull();
+  });
+
+  it("detects multi-value file serialize errors", () => {
+    expect(isMultiValueFileSerializeError(new Error(
+      'String cannot represent value: ["https://cdn.example/a.png"]'
+    ))).toBe(true);
+    expect(isMultiValueFileSerializeError(new Error("Network error"))).toBe(false);
+  });
+
+  it("seeds multi-value file field skips", () => {
+    const model = {
+      ...MODEL,
+      fields: [
+        { fieldId: "title", type: "text", multipleValues: false },
+        { fieldId: "gallery", type: "file", multipleValues: true },
+        { fieldId: "hero", type: "file", multipleValues: false },
+      ],
+    };
+    const skip = new Set<string>();
+    expect(seedMultiValueFileSkips(model, skip)).toEqual(["gallery"]);
+    expect(skip.has("gallery")).toBe(true);
+    expect(skip.has("hero")).toBe(false);
   });
 });
 

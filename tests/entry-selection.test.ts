@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { unwrapType, introspectedFieldLines } from "../packages/cms-entries/src/entry-selection";
+import { unwrapType, introspectedFieldLines, entryDisplayLines } from "../src/artifacts/cms-entries/entry-selection";
 
 // Minimal fake GraphQLClient: answers __type(name:"X") introspection from a map.
 function mockClient(types: Record<string, Array<{ name: string; type: unknown }>>) {
@@ -50,7 +50,7 @@ describe("introspectedFieldLines", () => {
     const map = await introspectedFieldLines(client, { listOperation: "listFoos" } as never);
     expect(map).not.toBeNull();
     expect(map!.get("title")).toBe("title");
-    // Regression: previously the second sibling got an empty selection and was dropped.
+    // Sibling fields under the same parent must both remain in the selection.
     expect(map!.get("linkA")).toBe("linkA { url label }");
     expect(map!.get("linkB")).toBe("linkB { url label }");
   });
@@ -58,5 +58,33 @@ describe("introspectedFieldLines", () => {
   it("returns null when the values type can't be resolved", async () => {
     const client = mockClient({ Query: [] });
     expect(await introspectedFieldLines(client, { listOperation: "listFoos" } as never)).toBeNull();
+  });
+});
+
+describe("entryDisplayLines", () => {
+  it("includes meta { status version title } when the entry type has a meta field", async () => {
+    const client = mockClient({
+      Query: [obj("listFoos", "FooResp")],
+      FooResp: [{ name: "data", type: { kind: "LIST", name: null, ofType: { kind: "OBJECT", name: "Foo" } } }],
+      Foo: [
+        obj("values", "FooValues"),
+        scalar("id"),
+        scalar("createdOn"),
+        scalar("savedOn"),
+        obj("meta", "FooMeta"),
+        obj("createdBy", "FooUser"),
+      ],
+      FooMeta: [scalar("status"), scalar("version"), scalar("title")],
+      FooUser: [scalar("displayName"), scalar("id")],
+    });
+    const lines = await entryDisplayLines(client, "listFoos");
+    expect(lines).toContain("meta { status version title }");
+    expect(lines).toContain("createdOn");
+    expect(lines).toContain("savedOn");
+  });
+
+  it("returns an empty array when the entry type can't be resolved", async () => {
+    const client = mockClient({ Query: [] });
+    expect(await entryDisplayLines(client, "listFoos")).toEqual([]);
   });
 });

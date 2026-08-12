@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeFolderId, entryFolderId, ROOT_FOLDER_ID } from "../packages/cms-entries/src/folders";
+import { normalizeFolderId, entryFolderId, ROOT_FOLDER_ID } from "../src/artifacts/cms-entries/folders";
 
 describe("cms-entries normalizeFolderId", () => {
   it("treats 'root' / empty / non-string as no-folder", () => {

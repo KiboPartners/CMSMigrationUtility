@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildCatalog, resolveDependencies } from "../shared/src/catalog";
-import { planMigration, parseSelection } from "../shared/src/plan";
+import { buildCatalog, resolveDependencies } from "../src/shared/catalog";
+import { planMigration, parseSelection } from "../src/shared/plan";
 
 const catalog = buildCatalog(
   { role: "source", tenant: "t", locale: "en-US" },

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { envInt } from "../shared/src/config";
+import { envInt } from "../src/shared/config";
 
 describe("envInt", () => {
   it("honors an explicit 0 (not treated as falsy)", () => {

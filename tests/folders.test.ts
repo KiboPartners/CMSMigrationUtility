@@ -6,7 +6,7 @@ import {
   buildFolderPath,
   syncFolders,
   validateFolderMapping,
-} from "../shared/src/folders";
+} from "../src/shared/folders";
 
 const N = (id: string, parentId: string | null, slug: string): FolderNode => ({
   id,

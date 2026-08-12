@@ -1,5 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { diffModelFields, createOpFor } from "../packages/cms-entries/src/provision";
+import { diffModelFields, createOpFor, isModelAlreadyExistsError } from "../src/artifacts/cms-entries/provision";
+
+describe("isModelAlreadyExistsError", () => {
+  it("matches Kibo's already-exists validation message", () => {
+    expect(isModelAlreadyExistsError('Content model with modelId "siteId" already exists. (Cms/Model/ValidationError)')).toBe(true);
+  });
+  it("is case-insensitive", () => {
+    expect(isModelAlreadyExistsError("Model Already Exists")).toBe(true);
+  });
+  it("does not match unrelated errors", () => {
+    expect(isModelAlreadyExistsError("no content model group available on target")).toBe(false);
+    expect(isModelAlreadyExistsError("Server error: HTTP 504")).toBe(false);
+  });
+});
 
 describe("diffModelFields", () => {
   it("flags missing-on-target and type-mismatch as blocking; extra as warning", () => {

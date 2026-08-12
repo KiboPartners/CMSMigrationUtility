@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cleanRef } from "../packages/cms-entries/src/clone";
+import { cleanRef } from "../src/artifacts/cms-entries/clone";
 
 describe("cleanRef (ref-field input shape)", () => {
   it("strips entryId, keeping { modelId, id } (RefFieldInput)", () => {

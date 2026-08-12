@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { createRun, applyResults, runSummary, pendingItems } from "../shared/src/runstore";
-import type { MigrationPlan } from "../shared/src/plan";
+import {
+  createRun, createEmptyRun, createRunFromItems, applyResults, runSummary, pendingItems,
+  synthesizePurgeResults, workstreamLedgerDirs,
+} from "../src/shared/runstore";
+import type { MigrationPlan } from "../src/shared/plan";
+import path from "path";
 
 const plan: MigrationPlan = {
   steps: [{ type: "cms-entry", ids: ["e1", "e2"] }],
@@ -36,5 +40,36 @@ describe("runstore", () => {
       { type: "cms-entry", id: "e2", status: "skipped" },
     ], "t1");
     expect(r.status).toBe("complete");
+  });
+
+  it("upserts unknown items so export/import can grow an empty ledger", () => {
+    const r = createEmptyRun("r1", env, "t0");
+    applyResults(r, [
+      { type: "file", id: "https://cdn/a.png", status: "done", action: "exported" },
+      { type: "cms-entry", id: "e1", status: "done", action: "exported" },
+    ], "t1");
+    expect(r.items.length).toBe(2);
+    expect(r.status).toBe("complete");
+  });
+
+  it("seeds purge selection and synthesizes dry-run outcomes", () => {
+    const r = createRunFromItems("p1", env, [
+      { type: "page", id: "p1" },
+      { type: "page", id: "p2" },
+    ], "t0");
+    applyResults(r, synthesizePurgeResults("page", ["p1", "p2"], true), "t1");
+    expect(runSummary(r).skipped).toBe(2);
+    expect(r.items.every((i) => i.action === "would-delete")).toBe(true);
+  });
+
+  it("lists workstream ledger dirs under logs root", () => {
+    const dirs = workstreamLedgerDirs("/repo/.logs", ["/repo/.runs"]);
+    expect(dirs).toEqual([
+      path.join("/repo/.logs", "migrate"),
+      path.join("/repo/.logs", "import"),
+      path.join("/repo/.logs", "export"),
+      path.join("/repo/.logs", "purge"),
+      "/repo/.runs",
+    ]);
   });
 });

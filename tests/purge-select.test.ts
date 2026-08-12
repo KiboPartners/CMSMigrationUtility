@@ -10,7 +10,7 @@
  * stripping any `#revision` suffix, which we exercise here via the helper).
  */
 import { describe, it, expect } from "vitest";
-import { selectedFilter } from "../packages/cms-entries/src/purge";
+import { selectedFilter } from "../src/artifacts/cms-entries/purge";
 
 /** Mirror of the bare-entryId normalization used inside purgeFromExportFiles/purgeAllEntries. */
 function bareEntryId(value: string | null | undefined): string {

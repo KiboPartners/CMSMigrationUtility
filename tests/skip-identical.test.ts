@@ -2,12 +2,12 @@ import { describe, it, expect } from "vitest";
 import {
   normalizeEntryValues,
   fingerprintSourceEntry,
-} from "../packages/cms-entries/src/clone";
+} from "../src/artifacts/cms-entries/clone";
 import {
   normalizePageContent,
   fingerprintSourcePage,
-} from "../packages/page-builder/src/pages";
-import type { FieldDefinition } from "../packages/cms-entries/src/introspect";
+} from "../src/artifacts/page-builder/pages";
+import type { FieldDefinition } from "../src/artifacts/cms-entries/introspect";
 
 const SRC_CDN = "https://cdn.source.example.com";
 const TGT_CDN = "https://cdn.target.example.com";

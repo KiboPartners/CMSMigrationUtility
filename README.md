@@ -1,310 +1,414 @@
 # Kibo CMS Migration Utility
 
-Migrate content — **content models, CMS entries, pages, redirects, file metadata** — between Kibo CMS environments or tenants, over the GraphQL APIs. No server or S3 access. Drive it from a **web UI** or the **CLI**.
+A reference utility for copying Kibo CMS content between environments or tenants: **content models, Content Entries, pages, redirects, and files**. Binary file transfer streams from the source CDN to the target by default.
 
-- **Browse & select** what to migrate; dependencies are pulled in automatically.
-- **Models fetched live from source** and provisioned on the target — no manual schema export.
-- **Validates** existing target models before importing; blocks on field mismatch.
-- **Folder structure preserved.** ACO folders for files, redirects, pages and CMS entries are recreated on the target (match-or-create, parents first) and each item is placed in its matching folder. A pre-import gate blocks if a folder can't sync (override: `--allow-folder-mismatch`).
-- **Resumable, audited runs** with per-item success/failure + metrics + per-step timing.
-- **Adaptive throttling** backs off automatically on rate limits.
+Operators may use the local **web UI** for interactive work, or the **CLI** for scripted and automated runs.
 
-Source is only ever **read**. Target is written only when you run a real (non–dry-run) migration.
+## ℹ️ Status and support
+
+> This repository is provided **as-is** for professional use and evaluation. There is **no warranty**, and **no ongoing support, maintenance, or defect remediation** is offered by the authors or publisher.
+
+> If the utility does not meet your requirements, **fork the repository** and adapt it for your organization. Contributions and forks are welcome; please do not expect fixes, SLAs, or implementation assistance from the original maintainers.
+
+Review configuration, dry-run results, and target impact carefully before any live write. You are responsible for credentials, tenant selection, data integrity, and compliance in your environments.
 
 ---
 
-## Setup
 
-Prerequisites: **Node.js 20+** and **git**.
+| Capability               | Description                                                                                                           |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| Live model provisioning  | Models are read from the source and created on the target — no manual schema export                                   |
+| Schema and folder checks | Stops on field mismatches or folders that failed to sync (overridable when appropriate)                               |
+| Selective or full copy   | Select items from a catalog and migrate, or export then import an entire environment                                  |
+| Import as draft          | Entries and pages are imported as drafts by default; publishing can be enabled when the source revision was published |
+| Resumable audits         | Per-item migrate ledger under `.logs/migrate/`; export/import/purge logs under `.logs/`                               |
+| Live progress in the UI  | Each workspace streams a console while the job runs                                                                   |
+
+
+The source environment is treated as **read-only**. The target is modified only when dry-run is disabled and a live run is executed.
+
+---
+
+
+
+## Quick start
+
+**Prerequisites:** Node.js **20+**, git.
 
 ```bash
-git clone <repo-url> kibo-cms-clone-tool
-cd kibo-cms-clone-tool
-npm install
-npm run build
-cp .env.example .env      # then fill in SOURCE_* and TARGET_* (see below)
+git clone <repo-url> CMSMigrationUtility
+cd CMSMigrationUtility
+npm install                   # also builds shared + links the local package
+cp .env.example .env          # fill SOURCE_* and TARGET_* (see below)
+
+# Start the UI (uses local ts-node and the shared package bootstrap)
+npm run serve
+# → http://localhost:4317
 ```
 
-One `.env` at the repo root is used by everything (a per-package `.env` is a fallback).
+All commands in this README are intended to run from the **repository root**. A single root `.env` is used by the UI and the CLI. If `npm install` fails, resolve the install before starting the UI — `@kibo-cms-clone-tool/shared` is linked from `src/shared` during install.
 
-**Where to find each value** (per environment, in the Kibo admin):
+Optional shortcut for shorter commands:
 
-| Var | Where |
-|---|---|
-| `*_ADMIN_GQL_URL` | Your Kibo CMS GraphQL endpoint — e.g. `https://cms-api.<region>.gcp.kibocommerce.com/graphql` |
-| `*_MANAGE_URL` | Same host + `/cms/manage/<locale>` — e.g. `…/cms/manage/en-US` |
-| `*_API_KEY` | An application/API key with **both** Admin GQL and Headless CMS (Manage) scopes (see Permissions below) |
-| `*_TENANT` | The `/{tenantId}/` segment of your admin URL |
-| `*_CDN_DOMAIN` | The CDN host that serves your file assets |
-
-`.env.example` has a filled-in sample of the URL shapes to copy.
-
-**Required** — per environment, prefixed `SOURCE_` and `TARGET_`:
-
-| Var | Purpose |
-|---|---|
-| `*_ADMIN_GQL_URL` | Admin GraphQL endpoint (pages, redirects, files) |
-| `*_MANAGE_URL` | Manage API endpoint (CMS entries + content models) |
-| `*_API_KEY` | API key for that environment |
-| `*_TENANT` | Tenant id (`root` if single-tenant) |
-| `*_CDN_DOMAIN` | CDN host, for rewriting embedded asset URLs |
-| `LOCALE` | e.g. `en-US` (shared, not prefixed) |
-
-### Permissions prerequisite
-
-Each `*_API_KEY` must be authorized for **both** APIs on **that tenant**, or only part of the content migrates:
-
-| API | Covers | Without it |
-|---|---|---|
-| **Admin GraphQL** (`*_ADMIN_GQL_URL`) | pages, redirects, files, ACO folders | those artifacts can't be read/written |
-| **Manage API** (`*_MANAGE_URL`) | content models + CMS entries | models/entries show **"Not authorized"** and are skipped — even though pages still pull |
-
-A key scoped to Admin GQL only is the usual cause of *"pages migrated but models/entries didn't."* Grant the key the **Headless CMS (Manage)** application scope for the tenant. The catalog surfaces a per-type "Not authorized / no access" note rather than failing the whole run.
-
-**Optional** — all have defaults:
-
-| Var | Default | Effect |
-|---|---|---|
-| `SCHEMA_FILE` | — | Offline model-schema override (models are fetched live otherwise) |
-| `MODELS` | all | Restrict cms-entries to named models |
-| `SITE_ID_FILTER` | — | Only export entries with this `siteId` |
-| `CONCURRENCY` | `5` | Parallel writes |
-| `EXPORT_CONCURRENCY` | `6` | Parallel models during cms-entries export (falls back to `CONCURRENCY`) |
-| `DRY_RUN` | `false` | Preview without writing |
-| `SKIP_EXISTING` | `true` | file-manager: skip files already on target |
-| `INCLUDE_UNPUBLISHED` | `true` | page-builder: include unpublished pages |
-| `TAGS_FILTER` | — | file-manager: only export files with these tags |
-| `SOURCE_S3_BUCKET` / `TARGET_S3_BUCKET` / `SOURCE_S3_PREFIX` | — | Names used in the generated `s3-copy-manifest.txt` |
-| `RATE_LIMIT_DELAY_MS` | `0` | Base inter-request delay (floor; throttle is adaptive) |
-| `DEBUG` | `false` | Verbose GraphQL logging |
-
-See `.env.example` for the full template.
+```bash
+alias kibo='npm run cli --'
+kibo serve
+```
 
 ---
+
+
+
+## Configure `.env`
+
+Copy `.env.example` to `.env` and set source and target values. In the Kibo admin for each environment:
+
+
+| Variable          | Where to get it                                                                |
+| ----------------- | ------------------------------------------------------------------------------ |
+| `*_ADMIN_GQL_URL` | GraphQL endpoint, e.g. `https://cms-api.<region>.gcp.kibocommerce.com/graphql` |
+| `*_MANAGE_URL`    | Same host + `/cms/manage/<locale>`, e.g. `…/cms/manage/en-US`                  |
+| `*_API_KEY`       | App key with **both** Admin GraphQL and Headless CMS (Manage) scopes           |
+| `*_TENANT`        | The `/{tenantId}/` segment of the admin URL                                    |
+| `*_CDN_DOMAIN`    | CDN host that serves file assets                                               |
+| `LOCALE`          | e.g. `en-US` (shared; not prefixed with SOURCE_/TARGET_)                       |
+
+
+Prefix each environment-specific variable with `SOURCE_` or `TARGET_`. See `.env.example` for URL shapes.
+
+### API key permissions
+
+
+| API               | Covers                             | If missing                                               |
+| ----------------- | ---------------------------------- | -------------------------------------------------------- |
+| **Admin GraphQL** | pages, redirects, files, folders   | those types cannot be read or written                    |
+| **Manage API**    | content models and Content Entries | models/entries show **"Not authorized"** and are skipped |
+
+
+A key with only Admin GraphQL is the usual cause of *"pages migrated but models/entries didn't."*
+
+### Optional settings
+
+
+| Variable                                                     | Default      | Effect                                                                                               |
+| ------------------------------------------------------------ | ------------ | ---------------------------------------------------------------------------------------------------- |
+| `CONCURRENCY`                                                | `5`          | Parallel writes on import                                                                            |
+| `EXPORT_CONCURRENCY`                                         | `6`          | Parallel models on export/catalog (falls back to `CONCURRENCY`)                                      |
+| `DRY_RUN`                                                    | `false`      | Default dry-run for CLIs that honor the flag                                                         |
+| `RATE_LIMIT_DELAY_MS`                                        | `0`          | Minimum delay between GraphQL calls (ms)                                                             |
+| `DEBUG`                                                      | `false`      | Verbose GraphQL logging                                                                              |
+| `AS_DRAFT`                                                   | `true`       | Leave entries/pages as draft on import/migrate; set `false` to publish when the source was published |
+| `MODELS`                                                     | —            | Limit Content Entries to these model names (comma-separated)                                         |
+| `SITE_ID_FILTER`                                             | —            | Limit Content Entries to this `siteId`                                                               |
+| `TAGS_FILTER`                                                | —            | Limit files to these tags (comma-separated)                                                          |
+| `SCHEMA_FILE`                                                | —            | Offline content-model schema override (live fetch from source is the default)                        |
+| `STRUCTURE_CHUNK_SIZE`                                       | `1`          | Models per structure-import call; keep small if you see gateway **504** timeouts                     |
+| `STRUCTURE_TIMEOUT_MS`                                       | `35000`      | Abort a hung structure-import call (ms)                                                              |
+| `INCLUDE_UNPUBLISHED`                                        | `true`       | Include unpublished pages on export                                                                  |
+| `SKIP_EXISTING`                                              | `true`       | Skip files that already exist on the target                                                          |
+| `MAX_FILE_SIZE_MB`                                           | *(none)*     | Skip binaries larger than this size (MB)                                                             |
+| `SOURCE_S3_BUCKET` / `TARGET_S3_BUCKET` / `SOURCE_S3_PREFIX` | placeholders | Names used only in `s3-copy-manifest.txt` (not for live streaming)                                   |
+
+
+See `.env.example` for the full annotated list.
+
+---
+
+
 
 ## Web UI
 
 ```bash
-npx ts-node index.ts serve            # → http://localhost:4317  (--port to change)
+npm run cli -- serve          # http://localhost:4317
+npm run cli -- serve --port 4400
 ```
 
-**KIBO CMS Import Export Utility** — a collapsible left nav over five workspaces (light/dark theme):
+Five workspaces are available. Each job returns immediately and **streams a live console** while it runs. Logs are also written under `.logs/{export,import,migrate,purge}/`.
 
-| Workspace | What it does | CLI equivalent |
-|---|---|---|
-| **Export** | Pick a source tenant + artifact types (+ optional CMS model filter); writes to a timestamped server folder `export/exp-<tenant>-<ts>/`. | `export-all` |
-| **Import** | Choose a previously exported folder, pick types **and/or individual items** (select none = whole folder), **dry-run** + **allow folder mismatch** toggles. | `import-all` |
-| **Migrate** | Direct source→target: load catalog → select artifacts → migrate, with **dry-run / skip-export / allow schema mismatch / allow folder mismatch** toggles + per-item progress. CMS-entry & page rows show name, folder path, author, created/modified, status, and Live (with version when live). Import is selective too. | `catalog-all` → `plan` → `migrate` |
-| **Purge** | Catalog the **target**, select items, **dry-run preview**, then delete behind a **typed-tenant confirmation** modal. Toggles: **permanent** (else soft-delete to bin/Trash), **allow same tenant**. | per-package `purge --select` |
-| **Logs** | Run-ledger browser: text search + from/to date filter, aggregate metrics, per-run detail. | `runs`, `metrics` |
 
-**Parity note:** every workspace maps to a CLI command (above). **CLI-only** (not in the UI): run **resume**, and advanced flags (site-id, concurrency, locale). UI export/import/migrate/purge are synchronous — for very large jobs use the CLI.
+| Workspace   | Purpose                                                                                    |
+| ----------- | ------------------------------------------------------------------------------------------ |
+| **Export**  | Export selected content types from a **source** tenant into a dated folder under `export/` |
+| **Import**  | Import a saved (or uploaded zip) export folder into a **target** tenant                    |
+| **Migrate** | Select items from a live catalog and copy source → target in one flow                      |
+| **Purge**   | Delete selected items **on the target** (preview first, typed confirmation)                |
+| **Logs**    | Review migrate ledgers, job consoles, and summary metrics                                  |
+
+### UI walkthrough
+
+Screenshots below use **mock** tenant ids (`1000XXX` → `1000YYY`) and `cms-api.example.test` URLs for illustration only. Substitute your real source and target values from `.env`.
+
+#### Shell
+
+After `npm run serve`, open `http://localhost:4317`. The left **Workspace** nav switches Export / Import / Migrate / Purge / Logs. The header shows the current source and target tenant ids loaded from `.env` (editable per workspace where a tenant field is shown).
+
+#### Export
+
+1. Open **Export**. Confirm the **source tenant id** and artifact chips (Files, Content Models, Content Entries, Pages, Redirects).
+2. Optionally open **Filters** for discovery-only narrowing, then click **Load source catalog**.
+3. In **Select items**, check pages or entries as needed. File and model dependencies are auto-included as `dep` rows.
+4. With a selection: use **Export selected**. With no selection after load: use **Export all**. Prefer dry-run on later Import/Migrate steps before live writes.
+
+![Export — Discover (mock source tenant 1000XXX)](docs/images/ui/01-export-discover.png)
+
+![Export — Select items after catalog load](docs/images/ui/02-export-select.png)
+
+#### Import
+
+1. Open **Import** → step **Source**. Choose a server export folder (for example `exp-1000XXX-…`) or **Upload zip**.
+2. Continue to **Target**. Set the **target tenant id**, leave **dry-run** on for a preview, then proceed through **Items** and **Run**.
+
+![Import — choose export folder](docs/images/ui/03-import-source.png)
+
+![Import — target tenant and run options](docs/images/ui/03b-import-target.png)
+
+#### Migrate
+
+1. Open **Migrate**. Set **source** and **target** tenant ids, choose artifact types (and optional filters), then **Load source catalog**.
+2. Select items (dependencies hydrate the same way as Export). Keep **dry-run** on for the first pass, then disable it for a live copy.
+
+![Migrate — Discover with mock source 1000XXX and target 1000YYY](docs/images/ui/04-migrate-discover.png)
+
+![Migrate — Select items](docs/images/ui/05-migrate-select.png)
+
+#### Purge
+
+Open **Purge**, set the **target** tenant id, load a target catalog, preview with dry-run, then confirm deletion by typing the target tenant id. Purge is destructive — use with care.
+
+![Purge — Discover on mock target tenant 1000YYY](docs/images/ui/06-purge.png)
+
+#### Logs
+
+Open **Logs** to review prior export / import / migrate / purge runs, consoles, and summary metrics.
+
+![Logs workspace](docs/images/ui/07-logs.png)
+
+### Common options
+
+#### Export
+
+
+| Option                                   | Default                                            | Meaning                                                                                                                          |
+| ---------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| **Load source catalog**                  | —                                                  | Browse items (same type chips / filters as discovery). Selecting a page/entry **hydrates** file/model deps as checked `dep` rows |
+| **Export selected**                      | after catalog load, when items are checked         | Hydrates deps and exports **only that closure** into `export/exp-<tenant>-<ts>/`                                                 |
+| **Export all**                           | after catalog load; hidden while items are checked | Whole-type `export-all` for the selected chips (filters apply as today)                                                          |
+| **continue on error**                    | on                                                 | If one content type fails, keep exporting the rest                                                                               |
+| **include binaries**                     | off                                                | Also download file bytes into the export folder (File Manager only)                                                              |
+| **max MB**                               | 0 = all                                            | Skip binaries larger than this size                                                                                              |
+| **Content Models** / **Content Entries** | separate chips                                     | Export models, entries, or both                                                                                                  |
+| **Filters**                              | off                                                | Discovery for catalog load / whole-type export. Deps still included when using **Export selected**                               |
+
+
+CLI: `export-selected --catalog catalog.json --select @ids.txt --out ./export/exp-…` (optional `--omit-deps`, `--allow-missing-deps`).
+
+#### Import
+
+
+| Option                | Default | Meaning                                                                                                                                                                                                                                                                                                     |
+| --------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **dry-run**           | on      | Preview the import plan with **no writes** to the target                                                                                                                                                                                                                                                    |
+| **import as draft**   | on      | Leave entries and pages as drafts. Turn off to publish when the source was published                                                                                                                                                                                                                        |
+| **continue on error** | off     | If one content type fails, keep importing the rest                                                                                                                                                                                                                                                          |
+| **Item selection**    | none    | Select none = import everything. Select models only = schemas. Select rows = those items **and deps present in the export folder** (auto-checked `dep` rows; omit modal + `omittedDepIds` same as Migrate). No live hydrate — re-export with **Export selected** if a file/model is missing from the folder |
+
+
+**Advanced options** (collapsed by default):
+
+
+| Option                            | Default | Meaning                                                                                                                                                      |
+| --------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **allow folder mismatch**         | off     | If a folder could not be recreated, place affected items in **root** instead of failing                                                                      |
+| **allow schema mismatch**         | off     | Continue when target model fields differ from source (mismatched fields may still fail). Missing models are still created. Existing models are never changed |
+| **upload binaries (from folder)** | off     | Force offline use of the export’s `files/binaries/` cache (gaps are skipped). File Manager only. When a cache is present, import already prefers it without this toggle |
+| **Manifest only**                 | off     | Do **not** transfer file bytes — write `s3-copy-manifest.txt` for manual copy. When off and no local cache exists, binaries stream source CDN → target S3   |
+| **max MB**                        | 0 = all | Size gate for file binaries                                                                                                                                  |
+
+
+
+
+#### Migrate
+
+
+| Option                | Default | Meaning                                                                                                                                                                                                                                                                                                                                   |
+| --------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Type chips**        | all on  | Catalog only the selected content types                                                                                                                                                                                                                                                                                                   |
+| **Filters**           | off     | **Discovery only** — narrow what you browse and pick. Per selected type: turn **Filter** on for date/name/tags (or model names). **Load / Reload** re-fetches; **Narrow** filters in the browser. Selecting a page/entry still **hydrates** its file/model deps even if those rows were filtered out (they appear as checked `dep` rows). |
+| **dry-run**           | on      | Resolve the plan and dependencies with **no writes** and no ledger                                                                                                                                                                                                                                                                        |
+| **import as draft**   | on      | Same as Import — drafts by default; turn off to publish when the source was published                                                                                                                                                                                                                                                     |
+| **continue on error** | off     | Keep going after a failure (you can resume later from the CLI)                                                                                                                                                                                                                                                                            |
+
+
+**Advanced options** (collapsed by default):
+
+
+| Option                                                | Default | Meaning                                                                                      |
+| ----------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------- |
+| **skip-export (reuse last export)**                   | off     | Reuse the staging export folder. Leave **off** unless you just exported this exact selection |
+| **allow schema mismatch** / **allow folder mismatch** | off     | Same meaning as Import                                                                       |
+| **max MB**                                            | 0 = all | Size gate for file binaries                                                                  |
+
+
+
+
+#### Purge
+
+
+| Option                       | Default | Meaning                                                                                                                                                               |
+| ---------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Type chips** / **Filters** | —       | Load a catalog from the **target**; per selected type turn **Filter** on to set that type's date/name/tags (or model names). Types with Filter off are unconstrained. |
+| **permanent (hard delete)**  | off     | Skip the recycle bin — **unrecoverable**. Off = soft delete                                                                                                           |
+| **allow same tenant**        | off     | Required if source and target tenants are the same                                                                                                                    |
+| **Preview (dry-run)**        | —       | Shows what would be deleted; writes nothing                                                                                                                           |
+| **Delete selected…**         | —       | You must **type the target tenant id** to confirm                                                                                                                     |
+
+Purging a **Content Model** deletes **all entries** for that model on the target. File purge removes File Manager **metadata only** — S3 objects are never deleted by this tool.
+
 
 ---
+
+
 
 ## CLI
 
-The root orchestrator (`index.ts`) drives the two main flows: **selective copy** (`catalog-all` → `plan` → `migrate`) and **whole-environment** (`export-all` → `import-all`). All commands below run from the repo root.
+Two main flows:
 
-### Selective copy (catalog → plan → migrate)
+1. **Selective** — catalog → plan → migrate (best when you know what to copy)
+2. **Whole environment** — export-all → review → import-all
+
+
+
+### Selective copy
 
 ```bash
-# 1. Catalog the source (models, entries, pages, redirects, files)
-npx ts-node index.ts catalog-all --env source --out catalog.json
-npx ts-node index.ts catalog-all --env target --out target.json   # read target instead
-npx ts-node index.ts catalog-all --env source --skip file-manager --out catalog.json  # skip a type
+# 1. Catalog source (or target)
+npm run cli -- catalog-all --env source --out catalog.json
+npm run cli -- catalog-all --env target --out target-catalog.json
 
-# 2. Plan a selection (ids from the catalog; "a,b,c" inline or @file for a list)
-npx ts-node index.ts plan --catalog catalog.json --select "id1,id2"
-npx ts-node index.ts plan --catalog catalog.json --select @ids.txt --out plan.json
+# 2. Plan (optional — migrate also resolves dependencies)
+npm run cli -- plan --catalog catalog.json --select @ids.txt --out plan.json
 
-# 3. Migrate — dry-run first (no writes, no run recorded), then for real
-npx ts-node index.ts migrate --catalog catalog.json --select @ids.txt --dry-run
-npx ts-node index.ts migrate --catalog catalog.json --select @ids.txt
+# 3. Migrate — always dry-run first
+npm run cli -- migrate --catalog catalog.json --select @ids.txt --dry-run
+npm run cli -- migrate --catalog catalog.json --select @ids.txt
 
-# Migrate with overrides
-npx ts-node index.ts migrate --catalog catalog.json --select @ids.txt --allow-schema-mismatch   # import despite a field-incompatible target model
-npx ts-node index.ts migrate --catalog catalog.json --select @ids.txt --allow-folder-mismatch    # items whose folder didn't sync fall back to root
-npx ts-node index.ts migrate --catalog catalog.json --select @ids.txt --skip-export              # reuse the existing ./export staging dir (caution: stale ids become errors)
+# Common overrides
+npm run cli -- migrate --catalog catalog.json --select @ids.txt --allow-schema-mismatch
+npm run cli -- migrate --catalog catalog.json --select @ids.txt --allow-folder-mismatch
+npm run cli -- migrate --catalog catalog.json --select @ids.txt --allow-missing-deps
+npm run cli -- migrate --catalog catalog.json --select @ids.txt --no-as-draft
+npm run cli -- migrate --catalog catalog.json --select @ids.txt --continue-on-error
 
 # 4. Audit / resume
-npx ts-node index.ts runs                       # list recorded runs
-npx ts-node index.ts runs --show <run-id>       # full per-item ledger for one run
-npx ts-node index.ts metrics                    # totals + top errors across all runs
-npx ts-node index.ts migrate --resume <run-id>  # re-run only the items that didn't finish
+npm run cli -- runs
+npm run cli -- runs --show <run-id>
+npm run cli -- metrics
+npm run cli -- migrate --resume <run-id>
 ```
 
-`migrate` runs in dependency order (**models → files → entries → pages → redirects**), provisions missing models from the live source schema, validates existing ones, recreates ACO folders + places items in them, and records a resumable run under `.runs/`. Each run prints a per-step timing table. (Dry-run records no run — it just prints the plan.)
+Migrate order: **models → files → entries → pages → redirects**. Before export, migrate **hydrates** missing file/model deps from source (outside the catalog filter window); unresolved deps fail the run unless `--allow-missing-deps`. File export is selective (`--select`) so only folders for those files sync. Ledgers live at `.logs/migrate/<runId>/ledger.json`. Dry-run records **no** ledger. (Whole-environment `import-all` uses a different order: **files → models/entries → pages → redirects**.)
 
-**Tenants** default from `.env`; override per command with env-var prefixes:
+Override tenants for one command:
 
 ```bash
-SOURCE_TENANT=<src> TARGET_TENANT=<tgt> npx ts-node index.ts migrate --catalog catalog.json --select @ids.txt
+SOURCE_TENANT=<src> TARGET_TENANT=<tgt> npm run cli -- migrate --catalog catalog.json --select @ids.txt
 ```
 
-### Whole-environment copy (export-all → import-all)
+
+
+### Filters
+
+Export and catalog accept a JSON filter file for dates, names, and tags:
 
 ```bash
-# Export every artifact type from source → ./export/{files,cms,pages,redirects}
-npx ts-node index.ts export-all --out ./export
-
-# Scope the export
-npx ts-node index.ts export-all --out ./export --models PromoBanner,Article   # only these CMS models
-npx ts-node index.ts export-all --out ./export --site-id kibo-us              # only CMS entries with this siteId
-npx ts-node index.ts export-all --out ./export --tags hero,banners           # only files with these tags
-npx ts-node index.ts export-all --out ./export --locale en-US                # locale for cms-entries + pages
-npx ts-node index.ts export-all --out ./export --skip file-manager,redirects # skip whole packages
-
-# Import the staged export → target. Dry-run first, then real.
-npx ts-node index.ts import-all --in ./export --dry-run
-npx ts-node index.ts import-all --in ./export
-npx ts-node index.ts import-all --in ./export --allow-folder-mismatch        # items whose folder didn't sync fall back to root
-npx ts-node index.ts import-all --in ./export --skip redirects               # skip a package on import
+npm run cli -- export-all --filter ./filter.json --out ./export
+npm run cli -- catalog-all --filter ./filter.json --out catalog.json
 ```
 
-> When driven from the UI, `export-all`/`import-all` need an **absolute** `--out`/`--in` (each package spawns with its own cwd; a relative path scatters output). From the repo root the relative defaults are fine.
+Example `filter.json`:
+
+```json
+{
+  "timezone": "America/New_York",
+  "date": { "field": "createdOn", "mode": "relative", "preset": "last_7d" },
+  "fields": [
+    { "artifact": "cms-entry", "field": "name", "op": "contains", "value": ["hero", "banner"] },
+    { "artifact": "page", "field": "name", "op": "contains", "value": "/checkout" },
+    { "artifact": "file", "field": "tags", "op": "in", "value": ["hero"] }
+  ]
+}
+```
+
+
+
+### Whole-environment copy
+
+```bash
+# Export → ./export/{files,cms,pages,redirects}
+npm run cli -- export-all --out ./export
+npm run cli -- export-all --out ./export --with-binaries
+npm run cli -- export-all --out ./export --skip file-manager,redirects
+npm run cli -- export-all --out ./export --continue-on-error
+
+# Import (dry-run first)
+npm run cli -- import-all --in ./export --dry-run
+npm run cli -- import-all --in ./export
+npm run cli -- import-all --in ./export --no-as-draft
+npm run cli -- import-all --in ./export --allow-schema-mismatch --allow-folder-mismatch
+npm run cli -- import-all --in ./export --manifest-only
+npm run cli -- import-all --in ./export --select @ids.txt
+```
+
+Paths are resolved from the repository root.
+
+### Purge (destructive)
+
+```bash
+npm run cli -- catalog-all --env target --out target-catalog.json
+
+# Preview (default — omit --force)
+npm run cli -- purge --catalog target-catalog.json --select @ids.txt
+
+# Delete for real
+npm run cli -- purge --catalog target-catalog.json --select @ids.txt --force
+npm run cli -- purge --catalog target-catalog.json --select @ids.txt --force --permanent
+```
+
+
+| Flag                  | Effect                                                 |
+| --------------------- | ------------------------------------------------------ |
+| *(omit* `--force`*)*  | **Dry-run** — preview only                             |
+| `--force`             | Actually delete                                        |
+| `--permanent`         | Hard delete (skip recycle bin). Default is soft delete |
+| `--allow-same-tenant` | Required when target tenant equals source              |
+
+
+File purge removes File Manager **metadata only**. S3 binary objects are never deleted by this tool (there is no UI or CLI flag to remove them).
 
 ---
 
-## Per-package commands
 
-Each package (`packages/<name>`) also runs standalone. Common flags: `--dry-run`, `--select ids|@file`, `--in`/`--out`.
 
-| Package | Migrates | Notable commands |
-|---|---|---|
-| `cms-entries` | CMS entries + content models | `export`, `import [--create-missing-model] [--allow-schema-mismatch] [--allow-folder-mismatch]`, `models [--env src] [--provision ids]`, `catalog`, `purge` |
-| `file-manager` | File metadata (+ `s3-copy-manifest.txt`) | `export`, `import [--allow-folder-mismatch]`, `catalog`, `purge` |
-| `page-builder` | Pages | `export`, `import [--allow-folder-mismatch]`, `catalog`, `purge` |
-| `redirects` | Redirects | `export`, `import [--allow-folder-mismatch]`, `catalog`, `purge` |
-
-Run these from inside the package dir (`cd packages/<name>`). Defaults write/read `./export/<type>`.
+## Tests
 
 ```bash
-# cms-entries — export (live model introspection unless --models / --schema-file given)
-cd packages/cms-entries
-npx ts-node index.ts export --out ./export/cms                       # ALL models
-npx ts-node index.ts export --out ./export/cms --models PromoBanner,Article
-npx ts-node index.ts export --out ./export/cms --site-id kibo-us --locale en-US
-# cms-entries — import (model is provisioned live from source when --create-missing-model)
-npx ts-node index.ts import --in ./export/cms --dry-run
-npx ts-node index.ts import --in ./export/cms --create-missing-model
-npx ts-node index.ts import --in ./export/cms --create-missing-model --allow-schema-mismatch --allow-folder-mismatch
-npx ts-node index.ts import --in ./export/cms --select @ids.txt      # only these entryIds
-npx ts-node index.ts models --env source                            # list models
-npx ts-node index.ts models --provision @model-ids.txt              # create selected models on target
-
-# file-manager — metadata only (binaries go via the generated s3-copy-manifest.txt)
-cd packages/file-manager
-npx ts-node index.ts export --out ./export/files --tags hero,banners
-npx ts-node index.ts import --in ./export/files --dry-run
-npx ts-node index.ts import --in ./export/files --allow-folder-mismatch
-npx ts-node index.ts import --in ./export/files --select @keys.txt  # only these files (src URL or key)
-
-# page-builder
-cd packages/page-builder
-npx ts-node index.ts export --out ./export/pages --locale en-US --include-unpublished false
-npx ts-node index.ts import --in ./export/pages --dry-run
-npx ts-node index.ts import --in ./export/pages --select @page-ids.txt --allow-folder-mismatch
-
-# redirects
-cd packages/redirects
-npx ts-node index.ts export --out ./export/redirects
-npx ts-node index.ts import --in ./export/redirects --dry-run
-npx ts-node index.ts import --in ./export/redirects --select @from-paths.txt --allow-folder-mismatch
+npm test                 # unit (vitest)
+npm run test:plan        # unit + Playwright smoke + hydrate UI (same as CI)
+npm run test:e2e         # full Playwright suite (live specs need a real .env; smoke/hydrate specs mock CMS)
 ```
 
-### Purge (rollback) — destructive, heavily guarded
-
-Purge deletes content **from the target** (per package). It is gated by a safety ladder — each step is opt-in:
-
-| Step | Flag | Effect |
-|---|---|---|
-| 1 | *(none)* | **Dry-run** — lists what would be deleted, writes nothing |
-| 2 | `--confirm` | Prints a destructive-action **warning and stops** (preview the impact) |
-| 3 | `--force` | Overrides the warning and **actually deletes** |
-| — | `--permanent` | Hard-delete (skip the bin/Trash, **unrecoverable**). Default is **soft delete** |
-| — | `--allow-same-tenant` | Required to purge when `TARGET_TENANT == SOURCE_TENANT` (otherwise refused) |
-
-**Soft delete by default (recoverable):** entries and pages are deleted with `options: { permanently: false }` → they go to the recycle bin / Trash and can be restored in the CMS admin. `--permanent` hard-deletes. **Deleting a content model** removes all of its entries and is **always unrecoverable**.
-
-**Same-tenant guard:** a real purge refuses to run when target == source (a real purge once wiped a source tenant). Override only with `--allow-same-tenant`.
-
-**Scope:** `--all` (everything for the matched type on target) or export-manifest `--in <dir>` (only what's in that export).
-
-```bash
-# cms-entries
-cd packages/cms-entries
-npx ts-node index.ts purge --in ./export/cms                        # DRY RUN (default)
-npx ts-node index.ts purge --all --models PromoBanner --confirm    # shows the warning, then stops
-npx ts-node index.ts purge --all --models PromoBanner --force      # actually deletes
-npx ts-node index.ts purge --all --models PromoBanner --force --allow-same-tenant
-
-# file-manager — metadata only; S3 binaries are NOT removed
-cd packages/file-manager
-npx ts-node index.ts purge --in ./export/files                      # DRY RUN
-npx ts-node index.ts purge --all --force                           # every file registration on target
-
-# page-builder — pages are moved to TRASH (empty Trash in the admin to remove permanently).
-# WbPage has no stable cross-env id, so page purge is always all-pages (no --in / --all).
-cd packages/page-builder
-npx ts-node index.ts purge                                          # DRY RUN — all pages
-npx ts-node index.ts purge --force
-
-# redirects
-cd packages/redirects
-npx ts-node index.ts purge --in ./export/redirects                  # DRY RUN
-npx ts-node index.ts purge --all --force
-```
-
-> **Irreversible cascade:** purging CMS entries (or models) on the target cannot be undone — re-importing is the only recovery. Always run the dry-run first and double-check `TARGET_TENANT`.
+CI (`.github/workflows/ci.yml`) runs `npm run test:plan` on push to `main`/`master` and on all pull requests.
 
 ---
 
-## Notes
 
-- **Idempotent.** Imports upsert by stable key — entries by `entryId`, pages by path/slug, redirects by `redirectFrom`, files by key. Safe to re-run. Folder sync is match-or-create, so re-runs reuse folders rather than duplicating them.
-- **Folders preserved.** The source ACO folder tree is recreated on the target (parents first) and each item is placed in its matching folder — files/redirects/pages by `location.folderId`, CMS entries by `wbyAco_location` (folder tree on Admin GQL, entry membership on Manage). A failed/unmapped folder blocks the import unless `--allow-folder-mismatch` (then it falls back to root).
-- **Models are create-only.** Missing → created from the live source def; existing → validated, never auto-altered (override a mismatch with `--allow-schema-mismatch`).
-- **Files = metadata only.** Binaries aren't copied — share the generated `s3-copy-manifest.txt` with your AWS admin.
-- **`cms-schema.json` is optional.** Pass `--schema-file` only to use an offline model schema instead of reading it live.
-- **Purge** is heavily guarded: dry-run by default → `--confirm` warns → `--force` deletes; soft-delete to bin/Trash unless `--permanent`; refuses target==source unless `--allow-same-tenant`. See the [Purge section](#purge-rollback--destructive-heavily-guarded).
 
-Full step-by-step walkthrough: **[CUSTOMER-GUIDE.md](CUSTOMER-GUIDE.md)**.
+## Operational notes
 
----
+- **Defaults favor preview** — dry-run and import-as-draft checkboxes are on in the UI until explicitly disabled. Those toggles do **not** read `DRY_RUN` / `AS_DRAFT` from `.env` (env defaults apply to the CLI).
+- **Filter JSON shape** — the web UI emits per-artifact `dates` when Filter is on for a type; CLI `--filter` files may still use a single top-level `date` (the engine accepts both).
+- **Idempotent imports** — re-running the same selection upserts by stable keys (entry id, page path, redirect from, file key).
+- **Models are create-only** — missing models are created from the source; existing models are validated and never auto-changed.
+- **File binaries** — with no local cache, import/migrate stream source CDN → target by default. If the export includes `files/binaries/manifest.json`, import prefers that cache (gaps can still stream). Use **Manifest only** / `--manifest-only` when byte transfer is unavailable and a manual copy list is required.
+- **Logs** — workstream output under `.logs/{export,import,migrate,purge}/<runId>/`; migrate item ledger at `.logs/migrate/<runId>/ledger.json`.
 
-## Kibo 6.x specifics
-
-Namespace is `websiteBuilder`; CMS entry fields live under `values{}`; model management + entry ops are on the **Manage API** (not Admin GQL); input/operation type names are discovered by **runtime introspection**, never hardcoded. `"Tried to get value from a failed Result"` on publish is an async-job false error (the item is published).
-
----
-
-## For contributors
-
-```
-index.ts        root CLI orchestrator (export-all/import-all/catalog-all/plan/migrate/runs/metrics/serve)
-server.ts       Express web UI — Export / Import / Migrate / Purge / Logs (single embedded page)
-shared/src/     graphql (adaptive throttle), config (one .env), provider (createClient),
-                catalog, plan, runstore (.runs ledger), observability, folders (ACO engine)
-packages/*      per-artifact engines: cms-entries, file-manager, page-builder, redirects
-                each: index.ts (CLI) + src/{config,export,import/clone,catalog,…}
-tests/          vitest — pure-logic unit tests (no live API)
-```
-
-```bash
-npm install          # workspaces
-npm run build        # compile all packages (root index.ts/server.ts run via ts-node)
-npx vitest run       # ~55 tests
-```
-
-**How the pieces fit:** the root orchestrator spawns each package CLI in dependency order (model → file → cms-entry → page → redirect). Each package exports source→disk and imports disk→target; the orchestrator wires selection, the run ledger, and per-step timing around them. The web UI shells out to the same CLI.
-
-**Key invariants — read before changing migration logic:**
-- **Live model fetch is the default.** `--schema-file` is an optional offline override; don't re-introduce env defaults for it (that footgun was removed).
-- **Introspect at runtime; never hardcode** GraphQL type/op names — they vary by Kibo version.
-- **Folders go through the shared engine.** Add a foldered artifact by writing a `FolderAdapter` (`listTargetFolders`/`createFolder`) and calling `syncFolders` + `validateFolderMapping`; `"root"` means no folder.
-- **CMS entries:** content under `values{}`, refs shaped `{ modelId, id }` on input, folder tree on Admin `aco` (type = modelId) but membership in `wbyAco_location` on Manage.
-- **Preserved ids:** `entryId` and file id are preserved cross-env; pages/redirects matched by path/slug/redirectFrom.
-- **UI export/import use absolute `--out`/`--in`** (per-package cwd would otherwise scatter output).
-
-**Never commit:** `.env` (keys), `.runs/`, `export/`, `.migrate-tmp/`, `.catalog-tmp/` — all gitignored.

@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit + Playwright (smoke / hydrate UI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Serve needs a root .env so /api/env can populate UI fields.
+      # Placeholders only — hydrate UI specs mock catalog/migrate; no live CMS.
+      - name: Write CI .env
+        run: |
+          printf '%s\n' \
+            'SOURCE_ADMIN_GQL_URL=https://cms-api.example.test/graphql' \
+            'SOURCE_MANAGE_URL=https://cms-api.example.test/cms/manage/en-US' \
+            'SOURCE_API_KEY=ci-source-key' \
+            'SOURCE_TENANT=1000502' \
+            'SOURCE_CDN_DOMAIN=https://cdn.example.test' \
+            'TARGET_ADMIN_GQL_URL=https://cms-api.example.test/graphql' \
+            'TARGET_MANAGE_URL=https://cms-api.example.test/cms/manage/en-US' \
+            'TARGET_API_KEY=ci-target-key' \
+            'TARGET_TENANT=1000588' \
+            'TARGET_CDN_DOMAIN=https://cdn.example.test' \
+            'LOCALE=en-US' \
+            > .env
+
+      - name: Run test plan (vitest + Playwright UI)
+        run: npm run test:plan
+        env:
+          CI: true
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            e2e-report/
+            e2e-results/
+          if-no-files-found: ignore

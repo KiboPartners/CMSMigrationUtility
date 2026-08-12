@@ -2,7 +2,6 @@ node_modules/
 dist/
 .env
 .env.local
-packages/**/export/
 cms-schema.json
 *.schema.json
 cloning-errors-*.json
@@ -17,6 +16,15 @@ s3-copy-manifest.txt
 catalog*.json
 target-catalog.json
 .runs/
+.logs/
+.keymap/
+# Removed workspace layout — ignore if recreated locally (root paths only;
+# a bare `shared/` also matched src/shared/ and hid source from clones)
+packages/
+/shared/
+# Built output of @kibo-cms-clone-tool/shared — run `npm run build` after clone
+src/shared/dist/
+.import-tmp/
 .commitmsg.tmp
 *.log
 rerun-failed.sh
@@ -27,10 +35,28 @@ Thumbs.db
 graphify-out/
 .graphifyignore
 .playwright-mcp/
+e2e-report/
+e2e-results/
+test-results/
+playwright-report/
 .claude
+.superpowers/
+.cursorrules
+CLAUDE.md
+TODO.md
 # Local export staging output (exported content — never commit)
 export/
 .catalog-tmp/
-# Transient migrate/catalog scratch dirs
+# Transient migrate/catalog/perf scratch dirs
 .migrate-tmp/
 .catalog-tmp/
+.perf-tmp/
+
+# Local tooling / memory-store files
+mempalace.yaml
+entities.json
+.claude/
+.cursor/
+llms.txt
+docs/superpowers/
+AGENTS.md

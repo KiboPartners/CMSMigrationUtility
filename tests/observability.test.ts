@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { computeMetrics, aggregateMetrics } from "../shared/src/observability";
-import type { MigrationRun } from "../shared/src/runstore";
+import { computeMetrics, aggregateMetrics } from "../src/shared/observability";
+import type { MigrationRun } from "../src/shared/runstore";
 
 const run: MigrationRun = {
   id: "r", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:02.000Z",

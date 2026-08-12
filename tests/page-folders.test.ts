@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeFolderId, ROOT_FOLDER_ID } from "../packages/page-builder/src/folders";
+import { normalizeFolderId, ROOT_FOLDER_ID } from "../src/artifacts/page-builder/folders";
 
 describe("normalizeFolderId", () => {
   it("treats Kibo CMS's 'root' sentinel as no-folder (null)", () => {
